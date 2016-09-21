@@ -251,6 +251,16 @@ public final class ParseConstants {
    */
   public static final byte [] substringType = new byte [] {'s','u','b','s','t','r','i','n','g'};
 
+  /***
+   * LongType byte array
+   */
+  public static final byte [] longType = new byte[] {'l','o','n','g'};
+  
+  /***
+   * BigDecimal byte array
+   */
+  public static final byte [] decimalType = new byte[] {'d','e','c','i','m','a','l'};
+  
   /**
    * ASCII for Minus Sign
    */

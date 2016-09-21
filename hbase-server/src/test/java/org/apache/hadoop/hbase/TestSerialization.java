@@ -34,14 +34,20 @@ import java.util.Map;
 import java.util.NavigableSet;
 import java.util.Set;
 
+import org.apache.commons.lang.math.NumberUtils;
 import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
 import org.apache.hadoop.hbase.filter.BinaryComparator;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.Filter;
+import org.apache.hadoop.hbase.filter.LongComparator;
+import org.apache.hadoop.hbase.filter.ParseFilter;
 import org.apache.hadoop.hbase.filter.PrefixFilter;
 import org.apache.hadoop.hbase.filter.RowFilter;
+import org.apache.hadoop.hbase.filter.SingleColumnValueFilter;
+import org.apache.hadoop.hbase.filter.SubstringComparator;
 import org.apache.hadoop.hbase.io.TimeRange;
 import org.apache.hadoop.hbase.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.protobuf.generated.ClientProtos;
@@ -58,141 +64,153 @@ import org.junit.experimental.categories.Category;
  */
 @Category(SmallTests.class)
 public class TestSerialization {
-  @Test public void testKeyValue() throws Exception {
-    final String name = "testKeyValue2";
-    byte[] row = name.getBytes();
-    byte[] fam = "fam".getBytes();
-    byte[] qf = "qf".getBytes();
-    long ts = System.currentTimeMillis();
-    byte[] val = "val".getBytes();
-    KeyValue kv = new KeyValue(row, fam, qf, ts, val);
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream dos = new DataOutputStream(baos);
-    long l = KeyValue.write(kv, dos);
-    dos.close();
-    byte [] mb = baos.toByteArray();
-    ByteArrayInputStream bais = new ByteArrayInputStream(mb);
-    DataInputStream dis = new DataInputStream(bais);
-    KeyValue deserializedKv = KeyValue.create(dis);
-    assertTrue(Bytes.equals(kv.getBuffer(), deserializedKv.getBuffer()));
-    assertEquals(kv.getOffset(), deserializedKv.getOffset());
-    assertEquals(kv.getLength(), deserializedKv.getLength());
-  }
+	@Test public void testKeyValue() throws Exception {
+		final String name = "testKeyValue2";
+		byte[] row = name.getBytes();
+		byte[] fam = "fam".getBytes();
+		byte[] qf = "qf".getBytes();
+		long ts = System.currentTimeMillis();
+		byte[] val = "val".getBytes();
+		KeyValue kv = new KeyValue(row, fam, qf, ts, val);
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		DataOutputStream dos = new DataOutputStream(baos);
+		long l = KeyValue.write(kv, dos);
+		dos.close();
+		byte [] mb = baos.toByteArray();
+		ByteArrayInputStream bais = new ByteArrayInputStream(mb);
+		DataInputStream dis = new DataInputStream(bais);
+		KeyValue deserializedKv = KeyValue.create(dis);
+		assertTrue(Bytes.equals(kv.getBuffer(), deserializedKv.getBuffer()));
+		assertEquals(kv.getOffset(), deserializedKv.getOffset());
+		assertEquals(kv.getLength(), deserializedKv.getLength());
+	}
 
-  @Test public void testCreateKeyValueInvalidNegativeLength() {
+	@Test public void testCreateKeyValueInvalidNegativeLength() {
 
-    KeyValue kv_0 = new KeyValue(Bytes.toBytes("myRow"), Bytes.toBytes("myCF"),       // 51 bytes
-                                 Bytes.toBytes("myQualifier"), 12345L, Bytes.toBytes("my12345"));
+		KeyValue kv_0 = new KeyValue(Bytes.toBytes("myRow"), Bytes.toBytes("myCF"),       // 51 bytes
+				Bytes.toBytes("myQualifier"), 12345L, Bytes.toBytes("my12345"));
 
-    KeyValue kv_1 = new KeyValue(Bytes.toBytes("myRow"), Bytes.toBytes("myCF"),       // 49 bytes
-                                 Bytes.toBytes("myQualifier"), 12345L, Bytes.toBytes("my123"));
+		KeyValue kv_1 = new KeyValue(Bytes.toBytes("myRow"), Bytes.toBytes("myCF"),       // 49 bytes
+				Bytes.toBytes("myQualifier"), 12345L, Bytes.toBytes("my123"));
 
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    DataOutputStream dos = new DataOutputStream(baos);
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+		DataOutputStream dos = new DataOutputStream(baos);
 
-    long l = 0;
-    try {
-      l  = KeyValue.oswrite(kv_0, dos, false);
-      l += KeyValue.oswrite(kv_1, dos, false);
-      assertEquals(100L, l);
-    } catch (IOException e) {
-      fail("Unexpected IOException" + e.getMessage());
-    }
+		long l = 0;
+		try {
+			l  = KeyValue.oswrite(kv_0, dos, false);
+			l += KeyValue.oswrite(kv_1, dos, false);
+			assertEquals(100L, l);
+		} catch (IOException e) {
+			fail("Unexpected IOException" + e.getMessage());
+		}
 
-    ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
-    DataInputStream dis = new DataInputStream(bais);
+		ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+		DataInputStream dis = new DataInputStream(bais);
 
-    try {
-      KeyValue.create(dis);
-      assertTrue(kv_0.equals(kv_1));
-    } catch (Exception e) {
-      fail("Unexpected Exception" + e.getMessage());
-    }
+		try {
+			KeyValue.create(dis);
+			assertTrue(kv_0.equals(kv_1));
+		} catch (Exception e) {
+			fail("Unexpected Exception" + e.getMessage());
+		}
 
-    // length -1
-    try {
-      // even if we have a good kv now in dis we will just pass length with -1 for simplicity
-      KeyValue.create(-1, dis);
-      fail("Expected corrupt stream");
-    } catch (Exception e) {
-      assertEquals("Failed read -1 bytes, stream corrupt?", e.getMessage());
-    }
+		// length -1
+		try {
+			// even if we have a good kv now in dis we will just pass length with -1 for simplicity
+			KeyValue.create(-1, dis);
+			fail("Expected corrupt stream");
+		} catch (Exception e) {
+			assertEquals("Failed read -1 bytes, stream corrupt?", e.getMessage());
+		}
 
-  }
+	}
 
-  @Test
-  public void testSplitLogTask() throws DeserializationException {
-    SplitLogTask slt = new SplitLogTask.Unassigned(ServerName.valueOf("mgr,1,1"), 
-      RecoveryMode.LOG_REPLAY);
-    byte [] bytes = slt.toByteArray();
-    SplitLogTask sltDeserialized = SplitLogTask.parseFrom(bytes);
-    assertTrue(slt.equals(sltDeserialized));
-  }
+	@Test
+	public void testSplitLogTask() throws DeserializationException {
+		SplitLogTask slt = new SplitLogTask.Unassigned(ServerName.valueOf("mgr,1,1"), 
+				RecoveryMode.LOG_REPLAY);
+		byte [] bytes = slt.toByteArray();
+		SplitLogTask sltDeserialized = SplitLogTask.parseFrom(bytes);
+		assertTrue(slt.equals(sltDeserialized));
+	}
 
-  @Test public void testCompareFilter() throws Exception {
-    Filter f = new RowFilter(CompareOp.EQUAL,
-      new BinaryComparator(Bytes.toBytes("testRowOne-2")));
-    byte [] bytes = f.toByteArray();
-    Filter ff = RowFilter.parseFrom(bytes);
-    assertNotNull(ff);
-  }
+	@Test public void testCompareFilter() throws Exception {
+		Filter f = new RowFilter(CompareOp.EQUAL,
+				new BinaryComparator(Bytes.toBytes("testRowOne-2")));
+		byte [] bytes = f.toByteArray();
+		Filter ff = RowFilter.parseFrom(bytes);
+		assertNotNull(ff);
+	}
 
-  @Test public void testTableDescriptor() throws Exception {
-    final String name = "testTableDescriptor";
-    HTableDescriptor htd = createTableDescriptor(name);
-    byte [] mb = Writables.getBytes(htd);
-    HTableDescriptor deserializedHtd =
-      (HTableDescriptor)Writables.getWritable(mb, new HTableDescriptor());
-    assertEquals(htd.getTableName(), deserializedHtd.getTableName());
-  }
+	@Test
+	public void testParsedLongComparatorFilter() throws Exception {
+		final String name = "testKeyValue2";
+		byte[] fam = "fam".getBytes();
+		byte[] qf = "qf".getBytes();
 
-  /**
-   * Test RegionInfo serialization
-   * @throws Exception
-   */
-  @Test public void testRegionInfo() throws Exception {
-    HRegionInfo hri = createRandomRegion("testRegionInfo");
+		Filter f = new SingleColumnValueFilter(fam, qf, CompareOp.GREATER_OR_EQUAL, new SubstringComparator("hello"));
+		byte [] bytes = f.toByteArray();
+		Filter ff = SingleColumnValueFilter.parseFrom(bytes);
+		assertNotNull(ff);
+	}
 
-    //test toByteArray()
-    byte [] hrib = hri.toByteArray();
-    HRegionInfo deserializedHri = HRegionInfo.parseFrom(hrib);
-    assertEquals(hri.getEncodedName(), deserializedHri.getEncodedName());
-    assertEquals(hri, deserializedHri);
+	@Test public void testTableDescriptor() throws Exception {
+		final String name = "testTableDescriptor";
+		HTableDescriptor htd = createTableDescriptor(name);
+		byte [] mb = Writables.getBytes(htd);
+		HTableDescriptor deserializedHtd =
+				(HTableDescriptor)Writables.getWritable(mb, new HTableDescriptor());
+		assertEquals(htd.getTableName(), deserializedHtd.getTableName());
+	}
 
-    //test toDelimitedByteArray()
-    hrib = hri.toDelimitedByteArray();
-    DataInputBuffer buf = new DataInputBuffer();
-    try {
-      buf.reset(hrib, hrib.length);
-      deserializedHri = HRegionInfo.parseFrom(buf);
-      assertEquals(hri.getEncodedName(), deserializedHri.getEncodedName());
-      assertEquals(hri, deserializedHri);
-    } finally {
-      buf.close();
-    }
-  }
+	/**
+	 * Test RegionInfo serialization
+	 * @throws Exception
+	 */
+	@Test public void testRegionInfo() throws Exception {
+		HRegionInfo hri = createRandomRegion("testRegionInfo");
 
-  @Test public void testRegionInfos() throws Exception {
-    HRegionInfo hri = createRandomRegion("testRegionInfos");
-    byte[] triple = HRegionInfo.toDelimitedByteArray(hri, hri, hri);
-    List<HRegionInfo> regions = HRegionInfo.parseDelimitedFrom(triple, 0, triple.length);
-    assertTrue(regions.size() == 3);
-    assertTrue(regions.get(0).equals(regions.get(1)));
-    assertTrue(regions.get(0).equals(regions.get(2)));
-  }
+		//test toByteArray()
+		byte [] hrib = hri.toByteArray();
+		HRegionInfo deserializedHri = HRegionInfo.parseFrom(hrib);
+		assertEquals(hri.getEncodedName(), deserializedHri.getEncodedName());
+		assertEquals(hri, deserializedHri);
 
-  private HRegionInfo createRandomRegion(final String name) {
-    HTableDescriptor htd = new HTableDescriptor(TableName.valueOf(name));
-    String [] families = new String [] {"info", "anchor"};
-    for (int i = 0; i < families.length; i++) {
-      htd.addFamily(new HColumnDescriptor(families[i]));
-    }
-    return new HRegionInfo(htd.getTableName(), HConstants.EMPTY_START_ROW,
-      HConstants.EMPTY_END_ROW);
-  }
+		//test toDelimitedByteArray()
+		hrib = hri.toDelimitedByteArray();
+		DataInputBuffer buf = new DataInputBuffer();
+		try {
+			buf.reset(hrib, hrib.length);
+			deserializedHri = HRegionInfo.parseFrom(buf);
+			assertEquals(hri.getEncodedName(), deserializedHri.getEncodedName());
+			assertEquals(hri, deserializedHri);
+		} finally {
+			buf.close();
+		}
+	}
 
-  /*
-   * TODO
+	@Test public void testRegionInfos() throws Exception {
+		HRegionInfo hri = createRandomRegion("testRegionInfos");
+		byte[] triple = HRegionInfo.toDelimitedByteArray(hri, hri, hri);
+		List<HRegionInfo> regions = HRegionInfo.parseDelimitedFrom(triple, 0, triple.length);
+		assertTrue(regions.size() == 3);
+		assertTrue(regions.get(0).equals(regions.get(1)));
+		assertTrue(regions.get(0).equals(regions.get(2)));
+	}
+
+	private HRegionInfo createRandomRegion(final String name) {
+		HTableDescriptor htd = new HTableDescriptor(TableName.valueOf(name));
+		String [] families = new String [] {"info", "anchor"};
+		for (int i = 0; i < families.length; i++) {
+			htd.addFamily(new HColumnDescriptor(families[i]));
+		}
+		return new HRegionInfo(htd.getTableName(), HConstants.EMPTY_START_ROW,
+				HConstants.EMPTY_END_ROW);
+	}
+
+	/*
+	 * TODO
   @Test public void testPut() throws Exception{
     byte[] row = "row".getBytes();
     byte[] fam = "fam".getBytes();
@@ -296,99 +314,99 @@ public class TestSerialization {
       }
     }
   }
-  */
+	 */
 
-  @Test public void testGet() throws Exception{
-    byte[] row = "row".getBytes();
-    byte[] fam = "fam".getBytes();
-    byte[] qf1 = "qf1".getBytes();
+	@Test public void testGet() throws Exception{
+		byte[] row = "row".getBytes();
+		byte[] fam = "fam".getBytes();
+		byte[] qf1 = "qf1".getBytes();
 
-    long ts = System.currentTimeMillis();
-    int maxVersions = 2;
+		long ts = System.currentTimeMillis();
+		int maxVersions = 2;
 
-    Get get = new Get(row);
-    get.addColumn(fam, qf1);
-    get.setTimeRange(ts, ts+1);
-    get.setMaxVersions(maxVersions);
+		Get get = new Get(row);
+		get.addColumn(fam, qf1);
+		get.setTimeRange(ts, ts+1);
+		get.setMaxVersions(maxVersions);
 
-    ClientProtos.Get getProto = ProtobufUtil.toGet(get);
-    Get desGet = ProtobufUtil.toGet(getProto);
+		ClientProtos.Get getProto = ProtobufUtil.toGet(get);
+		Get desGet = ProtobufUtil.toGet(getProto);
 
-    assertTrue(Bytes.equals(get.getRow(), desGet.getRow()));
-    Set<byte[]> set = null;
-    Set<byte[]> desSet = null;
+		assertTrue(Bytes.equals(get.getRow(), desGet.getRow()));
+		Set<byte[]> set = null;
+		Set<byte[]> desSet = null;
 
-    for(Map.Entry<byte[], NavigableSet<byte[]>> entry :
-        get.getFamilyMap().entrySet()){
-      assertTrue(desGet.getFamilyMap().containsKey(entry.getKey()));
-      set = entry.getValue();
-      desSet = desGet.getFamilyMap().get(entry.getKey());
-      for(byte [] qualifier : set){
-        assertTrue(desSet.contains(qualifier));
-      }
-    }
+		for(Map.Entry<byte[], NavigableSet<byte[]>> entry :
+			get.getFamilyMap().entrySet()){
+			assertTrue(desGet.getFamilyMap().containsKey(entry.getKey()));
+			set = entry.getValue();
+			desSet = desGet.getFamilyMap().get(entry.getKey());
+			for(byte [] qualifier : set){
+				assertTrue(desSet.contains(qualifier));
+			}
+		}
 
-    assertEquals(get.getMaxVersions(), desGet.getMaxVersions());
-    TimeRange tr = get.getTimeRange();
-    TimeRange desTr = desGet.getTimeRange();
-    assertEquals(tr.getMax(), desTr.getMax());
-    assertEquals(tr.getMin(), desTr.getMin());
-  }
+		assertEquals(get.getMaxVersions(), desGet.getMaxVersions());
+		TimeRange tr = get.getTimeRange();
+		TimeRange desTr = desGet.getTimeRange();
+		assertEquals(tr.getMax(), desTr.getMax());
+		assertEquals(tr.getMin(), desTr.getMin());
+	}
 
 
-  @Test public void testScan() throws Exception {
+	@Test public void testScan() throws Exception {
 
-    byte[] startRow = "startRow".getBytes();
-    byte[] stopRow  = "stopRow".getBytes();
-    byte[] fam = "fam".getBytes();
-    byte[] qf1 = "qf1".getBytes();
+		byte[] startRow = "startRow".getBytes();
+		byte[] stopRow  = "stopRow".getBytes();
+		byte[] fam = "fam".getBytes();
+		byte[] qf1 = "qf1".getBytes();
 
-    long ts = System.currentTimeMillis();
-    int maxVersions = 2;
+		long ts = System.currentTimeMillis();
+		int maxVersions = 2;
 
-    Scan scan = new Scan(startRow, stopRow);
-    scan.addColumn(fam, qf1);
-    scan.setTimeRange(ts, ts+1);
-    scan.setMaxVersions(maxVersions);
+		Scan scan = new Scan(startRow, stopRow);
+		scan.addColumn(fam, qf1);
+		scan.setTimeRange(ts, ts+1);
+		scan.setMaxVersions(maxVersions);
 
-    ClientProtos.Scan scanProto = ProtobufUtil.toScan(scan);
-    Scan desScan = ProtobufUtil.toScan(scanProto);
+		ClientProtos.Scan scanProto = ProtobufUtil.toScan(scan);
+		Scan desScan = ProtobufUtil.toScan(scanProto);
 
-    assertTrue(Bytes.equals(scan.getStartRow(), desScan.getStartRow()));
-    assertTrue(Bytes.equals(scan.getStopRow(), desScan.getStopRow()));
-    assertEquals(scan.getCacheBlocks(), desScan.getCacheBlocks());
-    Set<byte[]> set = null;
-    Set<byte[]> desSet = null;
+		assertTrue(Bytes.equals(scan.getStartRow(), desScan.getStartRow()));
+		assertTrue(Bytes.equals(scan.getStopRow(), desScan.getStopRow()));
+		assertEquals(scan.getCacheBlocks(), desScan.getCacheBlocks());
+		Set<byte[]> set = null;
+		Set<byte[]> desSet = null;
 
-    for(Map.Entry<byte[], NavigableSet<byte[]>> entry :
-        scan.getFamilyMap().entrySet()){
-      assertTrue(desScan.getFamilyMap().containsKey(entry.getKey()));
-      set = entry.getValue();
-      desSet = desScan.getFamilyMap().get(entry.getKey());
-      for(byte[] column : set){
-        assertTrue(desSet.contains(column));
-      }
+		for(Map.Entry<byte[], NavigableSet<byte[]>> entry :
+			scan.getFamilyMap().entrySet()){
+			assertTrue(desScan.getFamilyMap().containsKey(entry.getKey()));
+			set = entry.getValue();
+			desSet = desScan.getFamilyMap().get(entry.getKey());
+			for(byte[] column : set){
+				assertTrue(desSet.contains(column));
+			}
 
-      // Test filters are serialized properly.
-      scan = new Scan(startRow);
-      final String name = "testScan";
-      byte [] prefix = Bytes.toBytes(name);
-      scan.setFilter(new PrefixFilter(prefix));
-      scanProto = ProtobufUtil.toScan(scan);
-      desScan = ProtobufUtil.toScan(scanProto);
-      Filter f = desScan.getFilter();
-      assertTrue(f instanceof PrefixFilter);
-    }
+			// Test filters are serialized properly.
+			scan = new Scan(startRow);
+			final String name = "testScan";
+			byte [] prefix = Bytes.toBytes(name);
+			scan.setFilter(new PrefixFilter(prefix));
+			scanProto = ProtobufUtil.toScan(scan);
+			desScan = ProtobufUtil.toScan(scanProto);
+			Filter f = desScan.getFilter();
+			assertTrue(f instanceof PrefixFilter);
+		}
 
-    assertEquals(scan.getMaxVersions(), desScan.getMaxVersions());
-    TimeRange tr = scan.getTimeRange();
-    TimeRange desTr = desScan.getTimeRange();
-    assertEquals(tr.getMax(), desTr.getMax());
-    assertEquals(tr.getMin(), desTr.getMin());
-  }
+		assertEquals(scan.getMaxVersions(), desScan.getMaxVersions());
+		TimeRange tr = scan.getTimeRange();
+		TimeRange desTr = desScan.getTimeRange();
+		assertEquals(tr.getMax(), desTr.getMax());
+		assertEquals(tr.getMin(), desTr.getMin());
+	}
 
-  /*
-   * TODO
+	/*
+	 * TODO
   @Test public void testResultEmpty() throws Exception {
     List<KeyValue> keys = new ArrayList<KeyValue>();
     Result r = Result.newResult(keys);
@@ -562,46 +580,46 @@ public class TestSerialization {
     assertTrue(deResults.length == 0);
 
   }
-  */
+	 */
 
-  protected static final int MAXVERSIONS = 3;
-  protected final static byte [] fam1 = Bytes.toBytes("colfamily1");
-  protected final static byte [] fam2 = Bytes.toBytes("colfamily2");
-  protected final static byte [] fam3 = Bytes.toBytes("colfamily3");
-  protected static final byte [][] COLUMNS = {fam1, fam2, fam3};
+	protected static final int MAXVERSIONS = 3;
+	protected final static byte [] fam1 = Bytes.toBytes("colfamily1");
+	protected final static byte [] fam2 = Bytes.toBytes("colfamily2");
+	protected final static byte [] fam3 = Bytes.toBytes("colfamily3");
+	protected static final byte [][] COLUMNS = {fam1, fam2, fam3};
 
-  /**
-   * Create a table of name <code>name</code> with {@link COLUMNS} for
-   * families.
-   * @param name Name to give table.
-   * @return Column descriptor.
-   */
-  protected HTableDescriptor createTableDescriptor(final String name) {
-    return createTableDescriptor(name, MAXVERSIONS);
-  }
+	/**
+	 * Create a table of name <code>name</code> with {@link COLUMNS} for
+	 * families.
+	 * @param name Name to give table.
+	 * @return Column descriptor.
+	 */
+	protected HTableDescriptor createTableDescriptor(final String name) {
+		return createTableDescriptor(name, MAXVERSIONS);
+	}
 
-  /**
-   * Create a table of name <code>name</code> with {@link COLUMNS} for
-   * families.
-   * @param name Name to give table.
-   * @param versions How many versions to allow per column.
-   * @return Column descriptor.
-   */
-  protected HTableDescriptor createTableDescriptor(final String name,
-      final int versions) {
-    HTableDescriptor htd = new HTableDescriptor(TableName.valueOf(name));
-    htd.addFamily(new HColumnDescriptor(fam1)
-        .setMaxVersions(versions)
-        .setBlockCacheEnabled(false)
-    );
-    htd.addFamily(new HColumnDescriptor(fam2)
-        .setMaxVersions(versions)
-        .setBlockCacheEnabled(false)
-    );
-    htd.addFamily(new HColumnDescriptor(fam3)
-        .setMaxVersions(versions)
-        .setBlockCacheEnabled(false)
-    );
-    return htd;
-  }
+	/**
+	 * Create a table of name <code>name</code> with {@link COLUMNS} for
+	 * families.
+	 * @param name Name to give table.
+	 * @param versions How many versions to allow per column.
+	 * @return Column descriptor.
+	 */
+	protected HTableDescriptor createTableDescriptor(final String name,
+			final int versions) {
+		HTableDescriptor htd = new HTableDescriptor(TableName.valueOf(name));
+		htd.addFamily(new HColumnDescriptor(fam1)
+				.setMaxVersions(versions)
+				.setBlockCacheEnabled(false)
+				);
+		htd.addFamily(new HColumnDescriptor(fam2)
+				.setMaxVersions(versions)
+				.setBlockCacheEnabled(false)
+				);
+		htd.addFamily(new HColumnDescriptor(fam3)
+				.setMaxVersions(versions)
+				.setBlockCacheEnabled(false)
+				);
+		return htd;
+	}
 }

@@ -18,6 +18,7 @@
  */
 package org.apache.hadoop.hbase.filter;
 
+import org.apache.commons.lang.math.NumberUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.classification.InterfaceAudience;
@@ -807,6 +808,12 @@ public class ParseFilter {
       return new RegexStringComparator(new String(comparatorValue));
     else if (Bytes.equals(comparatorType, ParseConstants.substringType))
       return new SubstringComparator(new String(comparatorValue));
+    // decimal and long types use the same comparator but are separated out for forward
+    // compatibility when longType is supported in later versions of HBase
+    else if (Bytes.equals(comparatorType, ParseConstants.longType) ||
+    		Bytes.equals(comparatorType, ParseConstants.decimalType)) {
+    	return new LongComparator(comparatorValue);
+    }
     else
       throw new IllegalArgumentException("Incorrect comparatorType");
   }
@@ -861,5 +868,9 @@ public class ParseFilter {
       LOG.info("Registering new filter " + name);
 
     filterHashMap.put(name, filterClass);
+ 
   }
+  
+  
+ 
 }

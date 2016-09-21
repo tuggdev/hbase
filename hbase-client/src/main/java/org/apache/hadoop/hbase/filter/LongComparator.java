@@ -20,6 +20,13 @@ package org.apache.hadoop.hbase.filter;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 
+import java.math.BigDecimal;
+import java.text.DecimalFormat;
+import java.text.NumberFormat;
+import java.text.ParsePosition;
+import java.util.Locale;
+
+import org.apache.commons.lang.math.NumberUtils;
 import org.apache.hadoop.hbase.classification.InterfaceAudience;
 import org.apache.hadoop.hbase.classification.InterfaceStability;
 import org.apache.hadoop.hbase.exceptions.DeserializationException;
@@ -27,22 +34,46 @@ import org.apache.hadoop.hbase.protobuf.generated.ComparatorProtos;
 import org.apache.hadoop.hbase.util.Bytes;
 
 /**
- * A long comparator which numerical compares against the specified byte array
+ * A long comparator that compares long values compares against the specified byte array
+ * with support for arbitrary precision, signed decimal values
  */
 @InterfaceAudience.Public
 @InterfaceStability.Stable
 public class LongComparator extends ByteArrayComparable {
-    private Long longValue;
+	private BigDecimal decimalValue;
+	private Locale locale;
 
+	/**
+	 * Creates comparator with a long value, setting the default locale
+	 * @param value
+	 */
     public LongComparator(long value) {
       super(Bytes.toBytes(value));
-      this.longValue = value;
+      decimalValue = new BigDecimal(value);
+      locale = Locale.getDefault();
+    }
+    
+    /***
+     * Creates a comparator with a string value. If the value represents a decimal value, it will
+     * be parsed into a BigDecimal using the default locale
+     * 
+     * @param value
+     */
+    public LongComparator(byte[] value) {
+    	super(value);
+    	locale = Locale.getDefault();
+    	decimalValue = parse(new String(value));
     }
 
     @Override
     public int compareTo(byte[] value, int offset, int length) {
-      Long that = Bytes.toLong(value, offset, length);
-      return this.longValue.compareTo(that);
+      try {	
+    	  BigDecimal that = parse(Bytes.toString(value, offset, length));
+          return this.decimalValue.compareTo(that);
+      } catch (NumberFormatException e) {
+    	  // if the input cells being compared are not a number, this method returns 1
+    	  return 1;
+      }
     }
 
     /**
@@ -70,7 +101,7 @@ public class LongComparator extends ByteArrayComparable {
         } catch (InvalidProtocolBufferException e) {
             throw new DeserializationException(e);
         }
-        return new LongComparator(Bytes.toLong(proto.getComparable().getValue().toByteArray()));
+        return new LongComparator(proto.getComparable().getValue().toByteArray());
     }
 
     /**
@@ -82,4 +113,12 @@ public class LongComparator extends ByteArrayComparable {
         if (other == this) return true;
         return super.areSerializedFieldsEqual(other);
     }
+    
+    private BigDecimal parse(String str) {
+        DecimalFormat decimalFormat = (DecimalFormat)NumberFormat.getInstance(locale);
+        decimalFormat.setParseBigDecimal(true);
+
+        return (BigDecimal)decimalFormat.parse(str, new ParsePosition(0));
+    }
+    
 }

@@ -433,4 +433,5 @@
       </dependencies>
     </profile>
   </profiles>
+  <version>1.2.0-cdh5.8.0</version>
 </project>

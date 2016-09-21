@@ -100,6 +100,7 @@ public class TestGet {
     Assert.assertTrue(Arrays.equals(Bytes.toBytes("value3"), get2.getAttribute("attribute3")));
     Assert.assertEquals(3, get2.getAttributesMap().size());
   }
+ 
 
   @Test
   public void testGetAttributes() {
